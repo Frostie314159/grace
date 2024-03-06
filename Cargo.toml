@@ -28,5 +28,7 @@ linux = ["dep:tidy-tuntap", "futures/io-compat"]
 default = ["linux"]
 
 [dev-dependencies]
-sudo = "0.6.0"
+sudo = "0.6.0"  
 tokio = { version = "1.35.0", features = ["full"] }
+[profile.release]
+debug = true
