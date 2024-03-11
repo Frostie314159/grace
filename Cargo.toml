@@ -15,6 +15,8 @@ ieee80211 = "0.1.1"
 log = "0.4.20"
 mac-parser = "0.1.4"
 macro-bits = "0.1.4"
+neli = { features = ["async", "tokio"], git = "https://github.com/jbaublitz/neli.git" }
+neli-wifi = { git = "https://github.com/Frostie314159/neli-wifi.git", version = "0.6.0", features = ["async"] }
 pcap = "1.1.0"
 rtap = { git = "https://github.com/Frostie314159/rtap.git", branch = "experimental", version = "0.1.0" }
 scroll = "0.12.0"
@@ -30,5 +32,9 @@ default = ["linux"]
 [dev-dependencies]
 sudo = "0.6.0"  
 tokio = { version = "1.35.0", features = ["full"] }
+
 [profile.release]
-debug = true
+lto = true
+strip = true
+opt-level = "z"
+codegen-units = 1

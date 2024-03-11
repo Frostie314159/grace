@@ -1,5 +1,5 @@
 /*
-    GrACE a FOSS implementation of the AWDL protocol.
+    GraCe a FOSS implementation of the AWDL protocol.
     Copyright (C) 2024  Frostie314159
 
     This program is free software: you can redistribute it and/or modify

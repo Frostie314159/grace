@@ -1,5 +1,5 @@
 /*
-    GrACE a FOSS implementation of the AWDL protocol.
+    GraCe a FOSS implementation of the AWDL protocol.
     Copyright (C) 2024  Frostie314159
 
     This program is free software: you can redistribute it and/or modify
@@ -24,43 +24,35 @@ use awdl_frame_parser::{
     tlvs::{
         dns_sd::{dns_record::AWDLDnsRecord, DefaultServiceResponseTLV},
         sync_elect::{
-            channel::Channel, channel_sequence::ChannelSequence, ChannelSequenceTLV,
             ElectionParametersTLV, ElectionParametersV2TLV, SynchronizationParametersTLV,
         },
         TLVReadIterator, AWDLTLV,
     },
 };
-use ieee80211::{common::TU, mgmt_frame::header::ManagementFrameHeader};
-use log::trace;
+use ieee80211::mgmt_frame::header::ManagementFrameHeader;
 use mac_parser::MACAddress;
 use tokio::time::Instant;
 
-use crate::{
-    constants::{AW_DURATION, DEFAULT_CHANNEL_SEQUENCE_AW_COUNT, DEFAULT_SLOT_DURATION},
-    state::ElectionState,
-};
+use crate::{state::ElectionState, sync::SyncState};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SynchronizationState {
-    pub tlv: SynchronizationParametersTLV,
-}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Peer {
     pub address: MACAddress,
     pub election_state: ElectionState,
     pub last_psf_timestamp: Instant,
-    pub synchronization_state: SynchronizationState,
+    pub last_mif_timestamp: Instant,
+    pub sync_state: SyncState,
     pub is_airdrop: bool,
     pub last_tx_delta: Duration,
 }
 impl Peer {
-    fn extract_tlvs<'a>(
-        tlv_iter: TLVReadIterator<'a>,
+    fn extract_tlvs(
+        tlv_iter: TLVReadIterator<'_>,
     ) -> Option<(
         SynchronizationParametersTLV,
         ElectionParametersTLV,
         Option<ElectionParametersV2TLV>,
-        Vec<DefaultServiceResponseTLV<'a>>,
+        Vec<DefaultServiceResponseTLV<'_>>,
     )> {
         let mut synchronization_parameters_tlv = None;
         let mut election_parameters_tlv = None;
@@ -117,15 +109,22 @@ impl Peer {
             address: management_frame_header.transmitter_address,
             election_state: election_parameters_v2_tlv.into(),
             last_psf_timestamp: Instant::now(),
-            synchronization_state: SynchronizationState {
-                tlv: synchronization_parameters_tlv,
-            },
+            last_mif_timestamp: Instant::now(),
+            sync_state: SyncState::new_with_sync_params_tlv_and_tx_delta(
+                synchronization_parameters_tlv,
+                awdl_af.tx_delta(),
+            )
+            .unwrap(),
             is_airdrop,
             last_tx_delta: awdl_af.tx_delta(),
         })
     }
     pub async fn update_with_af(&mut self, awdl_af: DefaultAWDLActionFrame<'_>) {
-        self.last_psf_timestamp = Instant::now();
+        match awdl_af.subtype {
+            AWDLActionFrameSubType::MIF => self.last_mif_timestamp = Instant::now(),
+            AWDLActionFrameSubType::PSF => self.last_psf_timestamp = Instant::now(),
+            _ => {}
+        }
         let Some((
             synchronization_parameters_tlv,
             _election_parameters,
@@ -136,52 +135,11 @@ impl Peer {
             return;
         };
         self.election_state = election_parameters_v2_tlv.into();
-        self.synchronization_state = SynchronizationState {
-            tlv: synchronization_parameters_tlv,
-        };
+        self.sync_state = SyncState::new_with_sync_params_tlv_and_tx_delta(
+            synchronization_parameters_tlv,
+            awdl_af.tx_delta(),
+        )
+        .unwrap();
         self.last_tx_delta = awdl_af.tx_delta();
-        if self.address == self.election_state.sync_master_address {
-            /* trace!(
-                "Current slot in channel sequence: {:02} for peer {} with aw seq {}",
-                self.current_slot_in_chanseq(),
-                self.address,
-                self.synchronization_state.tlv.aw_seq_number
-            ); */
-        }
-    }
-    pub fn current_slot_in_chanseq(&self) -> usize {
-        self.current_aw_in_chanseq() / 4
-    }
-    pub fn current_aw_in_chanseq(&self) -> usize {
-        let aws_since_transmission = ((self.last_psf_timestamp.elapsed() + self.last_tx_delta + TU)
-            .as_micros()
-            / AW_DURATION.as_micros()) as u16; // One TU processing delta
-        (self
-            .synchronization_state
-            .tlv
-            .aw_seq_number
-            .wrapping_add(aws_since_transmission)
-            % 64) as usize
-    }
-    pub fn time_to_next_slot(&self) -> () {
-        let _delta = self.last_tx_delta + self.last_psf_timestamp.elapsed() + TU; // One TU processing delta.
-        let _slot_period = TU
-            * self.synchronization_state.tlv.aw_period.into()
-            * self.synchronization_state.tlv.presence_mode.into();
-    }
-    pub fn time_since_slot_zero(&self) -> Duration {
-        DEFAULT_SLOT_DURATION * self.current_slot_in_chanseq() as u32
-    }
-    pub fn current_channel(&self) -> u8 {
-        let ChannelSequence::Legacy(legacy_channel_sequence) = self
-            .synchronization_state
-            .tlv
-            .channel_sequence
-            .channel_sequence
-        else {
-            panic!()
-        };
-        let (flags, channel) = legacy_channel_sequence[self.current_slot_in_chanseq()];
-        Channel::Legacy { flags, channel }.channel()
     }
 }

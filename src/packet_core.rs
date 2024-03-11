@@ -1,5 +1,5 @@
 /*
-    GrACE a FOSS implementation of the AWDL protocol.
+    GraCe a FOSS implementation of the AWDL protocol.
     Copyright (C) 2024  Frostie314159
 
     This program is free software: you can redistribute it and/or modify
@@ -49,7 +49,12 @@ use scroll::{ctx::MeasureWith, Pread, Pwrite};
 use tokio::{process::Command, select, sync::RwLock, time::interval};
 
 use crate::{
-    constants::DEFAULT_SLOT_DURATION, hals::{EthernetInterface, HostEthernetInterface, HostWiFiInterface, WiFiInterface}, llc::AWDLLLCFrame, peer::{self, Peer}, state::SelfState, util::{ipv6_addr_from_hw_address, APPLE_OUI}
+    constants::DEFAULT_SLOT_DURATION,
+    hals::{EthernetInterface, HostEthernetInterface, HostWiFiInterface, WiFiInterface},
+    llc::AWDLLLCFrame,
+    peer::{self, Peer},
+    state::SelfState,
+    util::{ipv6_addr_from_hw_address, APPLE_OUI},
 };
 
 const AWDL_BSSID: MACAddress = MACAddress::new([0x00, 0x25, 0x00, 0xff, 0x94, 0x73]);
@@ -421,7 +426,10 @@ impl PacketCore {
             .into_iter()
             .for_each(|frame| unicast_queue.push_back(frame));
     }
-    async fn send_multicast_data_frames<const N: usize>(&mut self, multicast_queue: &mut CircularBuffer<N, OwnedEthernet2Frame>) {
+    async fn send_multicast_data_frames<const N: usize>(
+        &mut self,
+        multicast_queue: &mut CircularBuffer<N, OwnedEthernet2Frame>,
+    ) {
         while let Some(frame) = multicast_queue.pop_front() {
             let awdl_data_frame = AWDLDataFrame {
                 ether_type: frame.header.ether_type,

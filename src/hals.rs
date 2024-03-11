@@ -1,5 +1,5 @@
 /*
-    GrACE a FOSS implementation of the AWDL protocol.
+    GraCe a FOSS implementation of the AWDL protocol.
     Copyright (C) 2024  Frostie314159
 
     This program is free software: you can redistribute it and/or modify
@@ -16,11 +16,12 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use crate::hal_impls::{pcap::PcapWiFiInterface, *};
+use crate::hal_impls::{pcap_wifi::PcapWiFiInterface, *};
 use cfg_if::cfg_if;
 use core::future::Future;
 use mac_parser::MACAddress;
-use std::{io::Error, net::Ipv6Addr};
+use std::io::Error;
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
 #[derive(Debug)]
 pub enum EthernetInterfaceError<PlatformError> {
@@ -29,25 +30,31 @@ pub enum EthernetInterfaceError<PlatformError> {
     PlatformSpecificError(PlatformError),
     Unknown,
 }
+pub trait IPv6ControlInterface: Sized + Send + Sync + 'static {
+    fn add_peer_to_neighbor_table(&mut self, lladdr: MACAddress) -> impl Future + Send + Sync;
+    fn remove_peer_from_neighbor_table(&mut self, lladdr: MACAddress) -> impl Future + Send + Sync;
+}
 pub trait EthernetInterface<PlatformError>
 where
-    Self: Sized,
+    Self: Sized + Send + Sync + 'static,
 {
-    fn new(hardware_address: MACAddress) -> Result<Self, EthernetInterfaceError<PlatformError>>;
-    fn recv(
-        &mut self,
-        buf: &mut [u8],
-    ) -> impl Future<Output = Result<usize, EthernetInterfaceError<PlatformError>>> + Send;
-    fn send(
-        &mut self,
-        buf: &[u8],
-    ) -> impl Future<Output = Result<usize, EthernetInterfaceError<PlatformError>>> + Send;
-    fn add_peer_to_neighbor_table(&mut self, lladdr: MACAddress);
-    fn remove_peer_from_neighbor_table(&mut self, lladdr: MACAddress);
+    type InternalIO: AsyncRead + AsyncWrite + Sized + Send + Sync + 'static;
+    fn new(
+        hardware_address: MACAddress,
+    ) -> Result<
+        (
+            impl IPv6ControlInterface,
+            ReadHalf<Self::InternalIO>,
+            WriteHalf<Self::InternalIO>,
+        ),
+        EthernetInterfaceError<PlatformError>,
+    >;
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelWidth {
     TwentyMHz,
-    FourtyMHz,
+    FourtyMHzLower,
+    FourtyMHzUpper,
     EightyMHZ,
     OneHundredAndSixtyMHz,
     ThreeHundredAndTwentyMHz,
@@ -59,21 +66,30 @@ pub enum WiFiInterfaceError<PlatformError> {
     Other(&'static str),
     PlatformSpecificError(PlatformError),
 }
+pub trait WiFiControlInterface: Sized + Send + Sync + 'static {
+    fn set_channel(
+        &mut self,
+        channel: u8,
+        channel_width: ChannelWidth,
+    ) -> impl Future + Send + Sync;
+}
 pub trait WiFiInterface<PlatformError>
 where
-    Self: Sized,
+    Self: Sized + Send + Sync + 'static,
 {
-    fn new(interface_name: &str) -> Result<Self, WiFiInterfaceError<PlatformError>>;
-    fn recv(
-        &mut self,
-        buf: &mut [u8],
-    ) -> impl Future<Output = Result<usize, WiFiInterfaceError<PlatformError>>> + Send;
-    fn send(
-        &mut self,
-        bytes: &[u8],
-    ) -> impl Future<Output = Result<usize, WiFiInterfaceError<PlatformError>>> + Send;
-    fn is_5ghz_supported(&self) -> bool;
-    fn get_highest_channel_width(&self) -> ChannelWidth;
+    type InternalIO: AsyncRead + AsyncWrite + Sized + Send + Sync + 'static;
+    fn new(
+        interface_name: &str,
+    ) -> impl Future<
+        Output = Result<
+            (
+                impl WiFiControlInterface,
+                ReadHalf<Self::InternalIO>,
+                WriteHalf<Self::InternalIO>,
+            ),
+            WiFiInterfaceError<PlatformError>,
+        >,
+    > + Send;
 }
 cfg_if! {
     if #[cfg(feature = "linux")] {

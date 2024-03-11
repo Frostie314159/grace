@@ -1,5 +1,5 @@
 /*
-    GrACE a FOSS implementation of the AWDL protocol.
+    GraCe a FOSS implementation of the AWDL protocol.
     Copyright (C) 2024  Frostie314159
 
     This program is free software: you can redistribute it and/or modify
@@ -16,33 +16,42 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#![allow(unused)]
+use hals::{EthernetInterface, HostEthernetInterface, HostWiFiInterface, WiFiInterface};
+//#![allow(unused)]
+use grace::Grace;
 use log::LevelFilter;
-use packet_core::PacketCore;
+use mac_parser::MACAddress;
+//use packet_core::PacketCore;
 
 mod constants;
 mod hal_impls;
 mod hals;
 mod llc;
-mod packet_core;
+//mod packet_core;
+mod grace;
+mod macros;
 mod peer;
 mod state;
+mod sync;
 mod util;
 
-/// On the off chance, this code actually gets used, I'm gonna save someone from days of reversing.´
-#[used]
-pub static FRIENDLY_TEXT: &'static str = "
-    Hi, if you found this string, while reversing a binary of GrACE, I'm here to safe you the trouble, I the developer had in making this. 
-    GrACE is FOSS.
-";
+const MAC_ADDRESS: MACAddress = MACAddress::new([0x00, 0x80, 0x41, 0x13, 0x37, 0x42]);
 
-#[tokio::main]
-async fn main() {
+#[tokio::main(worker_threads = 4)]
+async fn run() {
+    let grace = Grace::new(
+        HostWiFiInterface::new("wlan1").await.unwrap(),
+        HostEthernetInterface::new(MAC_ADDRESS).unwrap(),
+    );
+    grace.run(MAC_ADDRESS).await;
+}
+
+// Setup code goes here.
+fn main() {
     env_logger::builder()
         .filter_level(LevelFilter::Trace)
+        .filter_module("neli", LevelFilter::Error)
         .init();
     sudo::escalate_if_needed().unwrap();
-    let mut packet_core =
-        PacketCore::new("wlan1", [0x00, 0x80, 0x41, 0x13, 0x37, 0x42].into()).await;
-    packet_core.run().await;
+    run();
 }
