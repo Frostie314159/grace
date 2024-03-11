@@ -16,7 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::{ffi::CStr, io::Cursor};
+use std::ffi::CStr;
 
 use mac_parser::MACAddress;
 use neli::{
@@ -25,9 +25,8 @@ use neli::{
     nl::NlPayload,
     router::asynchronous::NlRouter,
     types::Buffer,
-    ToBytes,
 };
-use neli_wifi::{AsyncSocket, Nl80211Attr, Nl80211ChanWidth, Nl80211Cmd, NL_80211_GENL_NAME, NL_80211_GENL_VERSION};
+use neli_wifi::{AsyncSocket, Nl80211Attr, Nl80211Cmd, NL_80211_GENL_NAME, NL_80211_GENL_VERSION};
 use tidy_tuntap::{error::Error as TunTapError, AsyncDevice, InterfaceType, Tap};
 
 use crate::{
@@ -120,7 +119,12 @@ impl LinuxWiFiControlInterface {
             .into_iter()
             .find_map(|interface| {
                 if let Some(interface_name) = interface.name {
-                    if CStr::from_bytes_with_nul(&interface_name).unwrap().to_str().unwrap() == wifi_device.as_ref() {
+                    if CStr::from_bytes_with_nul(&interface_name)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        == wifi_device.as_ref()
+                    {
                         Some(interface.index.unwrap())
                     } else {
                         None
@@ -159,9 +163,7 @@ impl LinuxWiFiControlInterface {
     fn convert_channel_width(channel_width: ChannelWidth) -> u32 {
         match channel_width {
             ChannelWidth::TwentyMHz => 1,
-            ChannelWidth::FourtyMHzLower | ChannelWidth::FourtyMHzUpper => {
-                2
-            }
+            ChannelWidth::FourtyMHzLower | ChannelWidth::FourtyMHzUpper => 2,
             ChannelWidth::EightyMHZ => 3,
             ChannelWidth::OneHundredAndSixtyMHz => 5,
             _ => todo!(),
@@ -192,10 +194,7 @@ impl LinuxWiFiControlInterface {
             _ => todo!(),
         }
     }
-    fn attribute_with_payload(
-        attribute: Nl80211Attr,
-        payload: u32,
-    ) -> Nlattr<Nl80211Attr, Buffer> {
+    fn attribute_with_payload(attribute: Nl80211Attr, payload: u32) -> Nlattr<Nl80211Attr, Buffer> {
         NlattrBuilder::default()
             .nla_type(
                 AttrTypeBuilder::default()
@@ -213,17 +212,15 @@ impl LinuxWiFiControlInterface {
 impl WiFiControlInterface for LinuxWiFiControlInterface {
     async fn set_channel(&mut self, channel: u8, channel_width: ChannelWidth) {
         let (center_frequency, support_frequency) =
-            Self::calculate_parameters_for_channel(channel as usize, channel_width)
-                .expect(&format!("Invalid channel config: channel {channel} width: {channel_width:?}"));
+            Self::calculate_parameters_for_channel(channel as usize, channel_width).unwrap_or_else(
+                || panic!("Invalid channel config: channel {channel} width: {channel_width:?}"),
+            );
         /* let center_frequency = 2437;
         let support_frequency = None::<usize>;
         let channel_width = ChannelWidth::TwentyMHz; */
         let mut attributes = vec![
             self.get_wifi_interface_attribute(),
-            Self::attribute_with_payload(
-                Nl80211Attr::AttrWiphyFreq,
-                center_frequency as u32,
-            ),
+            Self::attribute_with_payload(Nl80211Attr::AttrWiphyFreq, center_frequency as u32),
             Self::attribute_with_payload(
                 Nl80211Attr::AttrChannelWidth,
                 Self::convert_channel_width(channel_width),
@@ -241,7 +238,8 @@ impl WiFiControlInterface for LinuxWiFiControlInterface {
             .version(NL_80211_GENL_VERSION)
             .build()
             .unwrap();
-        let mut response = self.router
+        let response = self
+            .router
             .send::<_, _, Nlmsg, Genlmsghdr<Nl80211Cmd, Nl80211Attr, NoUserHeader>>(
                 self.nl80211_family_id,
                 NlmF::empty(),

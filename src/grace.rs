@@ -21,11 +21,13 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use awdl_frame_parser::{action_frame::DefaultAWDLActionFrame, data_frame::AWDLDataFrame};
 use ethernet::{Ethernet2Frame, Ethernet2Header};
 use ieee80211::{
-    common::TU, data_frame::{DataFrame, DataFrameReadPayload}, mgmt_frame::{
+    data_frame::{DataFrame, DataFrameReadPayload},
+    mgmt_frame::{
         body::{action::ActionFrameBody, ManagementFrameBody},
         header::ManagementFrameHeader,
         ManagementFrame,
-    }, IEEE80211Frame
+    },
+    IEEE80211Frame,
 };
 use log::{info, trace};
 use mac_parser::MACAddress;
@@ -39,7 +41,6 @@ use tokio::{
 };
 
 use crate::{
-    constants::DEFAULT_SLOT_DURATION,
     hals::{ChannelWidth, IPv6ControlInterface, WiFiControlInterface},
     llc::AWDLLLCFrame,
     peer::Peer,
@@ -338,7 +339,7 @@ impl<
                     let new_channel = sync_state.current_channel().channel();
                     if current_channel != new_channel {
                         current_channel = new_channel;
-                        
+
                         wifi_control_interface.set_channel(new_channel, match new_channel {
                             44 => ChannelWidth::TwentyMHz,
                             6 => ChannelWidth::TwentyMHz,

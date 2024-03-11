@@ -95,16 +95,13 @@ impl Peer {
         else {
             return None;
         };
-        let is_airdrop = service_responses
-            .into_iter()
-            .find(|service_response| {
-                if let AWDLDnsRecord::PTR { domain_name } = service_response.record {
-                    domain_name.domain == AWDLDnsCompression::AirDropTcpLocal
-                } else {
-                    false
-                }
-            })
-            .is_some();
+        let is_airdrop = service_responses.into_iter().any(|service_response| {
+            if let AWDLDnsRecord::PTR { domain_name } = service_response.record {
+                domain_name.domain == AWDLDnsCompression::AirDropTcpLocal
+            } else {
+                false
+            }
+        });
         Some(Peer {
             address: management_frame_header.transmitter_address,
             election_state: election_parameters_v2_tlv.into(),
