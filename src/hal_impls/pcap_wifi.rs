@@ -21,7 +21,7 @@ use std::{
     io::{self, ErrorKind},
     task::Poll,
 };
-use tokio::io::{split, unix::AsyncFd, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{split, unix::AsyncFd, AsyncRead, AsyncWrite, Interest, ReadHalf, WriteHalf};
 
 use crate::hals::{WiFiInterface, WiFiInterfaceError};
 
@@ -34,7 +34,8 @@ unsafe impl Sync for PcapAsyncWrapper {}
 impl PcapAsyncWrapper {
     pub fn new(capture: Capture<Active>) -> Self {
         Self {
-            inner: AsyncFd::new(capture).unwrap(),
+            inner: AsyncFd::with_interest(capture, Interest::READABLE | Interest::WRITABLE)
+                .unwrap(),
         }
     }
 }
@@ -78,12 +79,7 @@ impl AsyncWrite for PcapAsyncWrapper {
         loop {
             let mut guard = futures::ready!(self_mut.inner.poll_write_ready_mut(cx))?;
 
-            match guard.try_io(|inner| {
-                inner
-                    .get_mut()
-                    .sendpacket(buf)
-                    .map_err(|_| io::Error::new(ErrorKind::UnexpectedEof, "Pcap Error."))
-            }) {
+            match guard.try_io(|inner| Ok(inner.get_mut().sendpacket(buf).unwrap())) {
                 Ok(_result) => return Poll::Ready(Ok(buf.len())),
                 Err(_would_block) => continue,
             }

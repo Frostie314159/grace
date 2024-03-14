@@ -29,7 +29,7 @@ use awdl_frame_parser::{
         TLVReadIterator, AWDLTLV,
     },
 };
-use ieee80211::mgmt_frame::header::ManagementFrameHeader;
+use ieee80211::{common::TU, mgmt_frame::header::ManagementFrameHeader};
 use mac_parser::MACAddress;
 use tokio::time::Instant;
 
@@ -134,7 +134,7 @@ impl Peer {
         self.election_state = election_parameters_v2_tlv.into();
         self.sync_state = SyncState::new_with_sync_params_tlv_and_tx_delta(
             synchronization_parameters_tlv,
-            awdl_af.tx_delta(),
+            awdl_af.tx_delta() + TU,
         )
         .unwrap();
         self.last_tx_delta = awdl_af.tx_delta();

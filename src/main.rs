@@ -37,7 +37,8 @@ mod util;
 
 const MAC_ADDRESS: MACAddress = MACAddress::new([0x00, 0x80, 0x41, 0x13, 0x37, 0x42]);
 
-#[tokio::main(worker_threads = 4)]
+//#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn run() {
     let grace = Grace::new(
         HostWiFiInterface::new("wlan1").await.unwrap(),

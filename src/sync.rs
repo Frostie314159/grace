@@ -27,10 +27,7 @@ use ieee80211::common::TU;
 use tokio::time::{sleep, Instant};
 
 use crate::{
-    constants::{
-        AW_DURATION, DEFAULT_CHANNEL_SEQUENCE_AW_COUNT, DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION,
-        DEFAULT_SLOT_DURATION,
-    },
+    constants::{AW_DURATION, DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION, DEFAULT_SLOT_DURATION},
     duration_rem,
 };
 
@@ -54,29 +51,34 @@ const CHANNEL_6_FLAGS: (LegacyFlags, u8) = (
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SyncState {
     pub channel_sequence: [(LegacyFlags, u8); 16],
-    slot_zero_timestamp: Instant,
+    pub tsf_zero: Instant,
 }
 impl SyncState {
     pub fn new_with_default_chanseq() -> Self {
         Self {
             channel_sequence: {
-                let mut chan_seq = [CHANNEL_44_FLAGS; 16];
-                chan_seq[8] = CHANNEL_6_FLAGS;
+                let chan_seq = [CHANNEL_44_FLAGS; 16];
+                // We disable channel hopping completely for now.
+                /* chan_seq[8] = CHANNEL_6_FLAGS; */
                 chan_seq
             },
-            slot_zero_timestamp: Instant::now(),
+            tsf_zero: Instant::now(),
         }
     }
     /// The Δt should be the sum Δt specified in the AF-Header and the time which has elapsed since the reception of that frame.
     pub fn new_with_sync_params_tlv_and_tx_delta(
         sync_params_tlv: SynchronizationParametersTLV,
-        tx_delta: Duration,
+        _tx_delta: Duration,
     ) -> Option<Self> {
-        let aws_since_slot_zero =
-            sync_params_tlv.aw_seq_number % DEFAULT_CHANNEL_SEQUENCE_AW_COUNT as u16;
-        let slot_zero_timestamp =
-            Instant::now() - AW_DURATION * aws_since_slot_zero as u32 - tx_delta;
-
+        let aw_period = sync_params_tlv.aw_period as i32;
+        let elapsed_since_slot_zero_in_tu;
+        let elapsed_since_aw_begin_in_tu =
+            aw_period.wrapping_sub(sync_params_tlv.remaining_aw_length as i32);
+        elapsed_since_slot_zero_in_tu =
+            elapsed_since_aw_begin_in_tu + aw_period * sync_params_tlv.aw_seq_number as i32;
+        let tsf = Duration::from_nanos(
+            ((elapsed_since_slot_zero_in_tu as u64) << 10) % ((aw_period as u64) << 26),
+        );
         let ChannelSequence::Legacy(channel_sequence) =
             sync_params_tlv.channel_sequence.channel_sequence
         else {
@@ -84,23 +86,48 @@ impl SyncState {
         };
         Some(Self {
             channel_sequence,
-            slot_zero_timestamp,
+            tsf_zero: Instant::now() - tsf,
         })
     }
     pub fn sync_to(&mut self, other_state: SyncState) {
         // This is the advantage of our approach.
-        self.slot_zero_timestamp = other_state.slot_zero_timestamp;
+        self.tsf_zero = other_state.tsf_zero;
     }
     pub fn elapsed_since_current_slot_zero(&self) -> Duration {
         // If this doesn't work, change it back to div.
         duration_rem!(
-            self.slot_zero_timestamp.elapsed(),
+            self.tsf_zero.elapsed(),
             DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION
         )
+    }
+
+    fn channel_for_slot(&self, slot: usize) -> Channel {
+        let (flags, channel) = self.channel_sequence[slot];
+        Channel::Legacy { flags, channel }
+    }
+    pub fn overlaping_slots(&self, other: &SyncState) -> impl Iterator<Item = usize> {
+        self.channel_sequence
+            .into_iter()
+            .zip(other.channel_sequence.into_iter())
+            .enumerate()
+            .filter_map(|(i, (lhs, rhs))| if lhs == rhs { Some(i) } else { None })
+    }
+    pub fn is_current_channel_different_from_previous(&self) -> bool {
+        self.current_channel().channel() != self.previous_channel().channel()
+    }
+    pub fn aw_seq_number(&self) -> u16 {
+        (self.tsf_zero.elapsed().as_micros() / AW_DURATION.as_micros()) as u16
+    }
+
+    pub fn current_channel(&self) -> Channel {
+        self.channel_for_slot(self.current_slot_in_chanseq())
     }
     pub fn current_slot_in_chanseq(&self) -> usize {
         (self.elapsed_since_current_slot_zero().as_micros() / DEFAULT_SLOT_DURATION.as_micros())
             as usize
+    }
+    pub fn previous_channel(&self) -> Channel {
+        self.channel_for_slot(self.previous_slot_in_chanseq())
     }
     pub fn previous_slot_in_chanseq(&self) -> usize {
         let current_slot = self.current_slot_in_chanseq();
@@ -110,6 +137,9 @@ impl SyncState {
             15
         }
     }
+    pub fn next_channel(&self) -> Channel {
+        self.channel_for_slot(self.next_slot_in_chanseq())
+    }
     pub fn next_slot_in_chanseq(&self) -> usize {
         let current_slot = self.current_slot_in_chanseq();
         if current_slot < 15 {
@@ -118,40 +148,32 @@ impl SyncState {
             0
         }
     }
-    pub fn time_to_next_slot(&self) -> Duration {
+
+    pub fn remaining_aw_length(&self) -> Duration {
+        duration_rem!(self.tsf_zero.elapsed(), AW_DURATION)
+    }
+    pub fn remaining_aw_length_in_tu(&self) -> u16 {
+        (self.remaining_aw_length().as_micros() / TU.as_micros()) as u16
+    }
+    pub fn remaining_slot_length(&self) -> Duration {
         duration_rem!(
             self.elapsed_since_current_slot_zero(),
             DEFAULT_SLOT_DURATION
         )
     }
-    fn channel_for_slot(&self, slot: usize) -> Channel {
-        let (flags, channel) = self.channel_sequence[slot];
-        Channel::Legacy { flags, channel }
+    pub fn remaining_slot_length_in_tu(&self) -> u16 {
+        (self.remaining_slot_length().as_micros() / TU.as_micros()) as u16
     }
-    pub fn current_channel(&self) -> Channel {
-        self.channel_for_slot(self.current_slot_in_chanseq())
-    }
-    pub fn previous_channel(&self) -> Channel {
-        self.channel_for_slot(self.previous_slot_in_chanseq())
-    }
-    pub fn next_channel(&self) -> Channel {
-        self.channel_for_slot(self.next_slot_in_chanseq())
-    }
-    pub fn is_current_channel_different_from_previous(&self) -> bool {
-        self.current_channel().channel() != self.previous_channel().channel()
-    }
+
     pub async fn wait_for_next_slot(&self) -> Option<Channel> {
         let current_channel = self.current_channel();
         let next_channel = self.next_channel();
-        sleep(self.time_to_next_slot()).await;
+        sleep(self.remaining_slot_length()).await;
         if next_channel != current_channel {
             Some(next_channel)
         } else {
             None
         }
-    }
-    pub fn time_to_next_aw_in_tu(&self) -> u16 {
-        (self.time_to_next_slot().as_micros() / TU.as_micros()) as u16
     }
     pub fn get_channel_sequence_legacy(&self) -> ChannelSequenceTLV {
         ChannelSequenceTLV {

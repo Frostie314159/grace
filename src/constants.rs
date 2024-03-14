@@ -19,6 +19,7 @@
 use std::time::Duration;
 
 use ieee80211::common::TU;
+use mac_parser::MACAddress;
 
 macro_rules! mul_duration {
     ($duration:expr, $multiplier:expr) => {
@@ -35,3 +36,4 @@ pub const DEFAULT_CHANNEL_SEQUENCE_AW_COUNT: usize =
     DEFAULT_SLOT_AW_COUNT * DEFAULT_CHANNEL_SEQUENCE_SLOT_COUNT;
 pub const DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION: Duration =
     mul_duration!(DEFAULT_SLOT_DURATION, DEFAULT_CHANNEL_SEQUENCE_SLOT_COUNT);
+pub const AWDL_BSSID: MACAddress = MACAddress::new([0x00, 0x25, 0x00, 0xff, 0x94, 0x73]);

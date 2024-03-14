@@ -17,6 +17,7 @@
 */
 
 use awdl_frame_parser::{
+    action_frame::{AWDLActionFrame, AWDLActionFrameSubType},
     common::{AWDLDnsCompression, AWDLDnsName, AWDLStr, AWDLVersion},
     tlvs::{
         data_path::{
@@ -31,13 +32,30 @@ use awdl_frame_parser::{
         AWDLTLV,
     },
 };
-use mac_parser::MACAddress;
+use ieee80211::{
+    mgmt_frame::{
+        body::{action::ActionFrameBody, ToManagementFrameBody},
+        header::ManagementFrameHeader,
+        ManagementFrame,
+    },
+    ToFrame,
+};
+use mac_parser::{MACAddress, BROADCAST};
+use scroll::{
+    ctx::{MeasureWith, TryIntoCtx},
+    Pwrite,
+};
 use std::{
+    fmt::Debug,
     iter::{empty, Empty},
-    time::Instant,
+    time::{Instant, UNIX_EPOCH},
 };
 
-use crate::{constants::AW_DURATION, sync::SyncState};
+use crate::{
+    constants::{AWDL_BSSID, AW_DURATION},
+    sync::SyncState,
+    util::APPLE_OUI,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ElectionState {
@@ -89,9 +107,6 @@ impl SelfState {
             sequence_number: 0,
         }
     }
-    fn get_aw_seq_number(&self) -> u16 {
-        (self.init_timestamp.elapsed().as_micros() / AW_DURATION.as_micros()) as u16 % u16::MAX
-    }
     pub fn set_master_to_self(&mut self) {
         self.election_state.top_master_address = self.address;
         self.election_state.sync_master_address = self.address;
@@ -102,14 +117,14 @@ impl SelfState {
     fn generate_sync_params(&self) -> SynchronizationParametersTLV {
         SynchronizationParametersTLV {
             next_channel: self.sync_state.next_channel().channel(),
-            tx_counter: self.sync_state.time_to_next_aw_in_tu(),
+            tx_counter: self.sync_state.remaining_slot_length_in_tu(),
             master_channel: 6,
             aw_period: 16,
             af_period: 110,
             awdl_flags: 0x1800,
             aw_ext_length: 16,
             aw_common_length: 16,
-            remaining_aw_length: 0,
+            remaining_aw_length: self.sync_state.remaining_aw_length_in_tu(),
             min_ext_count: 3,
             max_multicast_ext_count: 3,
             max_unicast_ext_count: 3,
@@ -117,7 +132,7 @@ impl SelfState {
             master_address: self.election_state.sync_master_address,
             ap_beacon_alignment_delta: 0,
             presence_mode: 4,
-            aw_seq_number: self.get_aw_seq_number(),
+            aw_seq_number: self.sync_state.aw_seq_number(),
             channel_sequence: self.sync_state.get_channel_sequence_legacy(),
             ..Default::default()
         }
@@ -184,9 +199,10 @@ impl SelfState {
             rx_spatial_stream_count: 1,
         }
     }
-    pub fn generate_psf_body<'b>(
+    fn generate_psf_body(
         &self,
-    ) -> [AWDLTLV<'b, Empty<MACAddress>, Vec<AWDLStr>, Empty<u8>>; 7] {
+    ) -> impl IntoIterator<Item = AWDLTLV<'_, Empty<MACAddress>, Vec<AWDLStr>, Empty<u8>>> + Clone
+    {
         [
             AWDLTLV::SynchronizationParameters(self.generate_sync_params()),
             AWDLTLV::ElectionParameters(self.generate_election_parameters()),
@@ -197,9 +213,10 @@ impl SelfState {
             AWDLTLV::Version(self.generate_version_tlv()),
         ]
     }
-    pub fn generate_mif_body(
+    fn generate_mif_body(
         &self,
-    ) -> [AWDLTLV<'_, Empty<MACAddress>, Vec<AWDLStr>, Empty<u8>>; 9] {
+    ) -> impl IntoIterator<Item = AWDLTLV<'_, Empty<MACAddress>, Vec<AWDLStr>, Empty<u8>>> + Clone
+    {
         [
             AWDLTLV::SynchronizationParameters(self.generate_sync_params()),
             AWDLTLV::ElectionParameters(self.generate_election_parameters()),
@@ -211,5 +228,57 @@ impl SelfState {
             AWDLTLV::DataPathState(self.generate_data_path_state()),
             AWDLTLV::Version(self.generate_version_tlv()),
         ]
+    }
+    fn generate_awdl_af_with_body<'a, TLVIterator>(
+        &self,
+        body: TLVIterator,
+        subtype: AWDLActionFrameSubType,
+    ) -> Vec<u8>
+    where
+        AWDLActionFrame<TLVIterator>: MeasureWith<()> + TryIntoCtx<Error = scroll::Error>,
+    {
+        let tx_time = self.sync_state.tsf_zero.elapsed();
+        let awdl_af = AWDLActionFrame {
+            subtype,
+            phy_tx_time: tx_time,
+            target_tx_time: tx_time,
+            tagged_data: body,
+        };
+        let wifi_frame = ManagementFrame {
+            header: ManagementFrameHeader {
+                receiver_address: BROADCAST,
+                transmitter_address: self.address,
+                bssid: AWDL_BSSID,
+                ..Default::default()
+            },
+            body: ActionFrameBody::VendorSpecific {
+                oui: APPLE_OUI,
+                payload: awdl_af,
+            }
+            .to_management_frame_body(),
+        }
+        .to_frame();
+        let mut frame_buf = vec![0x00; wifi_frame.measure_with(&true) + 10];
+        frame_buf
+            .as_mut_slice()
+            .pwrite_with(wifi_frame, 10, true)
+            .unwrap();
+        frame_buf[2] = 10;
+        frame_buf[4] = 0x06;
+        frame_buf[8] = 0x10;
+        frame_buf[9] = 24;
+
+        frame_buf
+    }
+    pub fn generate_awdl_af(&self, subtype: AWDLActionFrameSubType) -> Vec<u8> {
+        match subtype {
+            AWDLActionFrameSubType::MIF => {
+                self.generate_awdl_af_with_body(self.generate_mif_body(), subtype)
+            }
+            AWDLActionFrameSubType::PSF => {
+                self.generate_awdl_af_with_body(self.generate_psf_body(), subtype)
+            }
+            _ => todo!(),
+        }
     }
 }

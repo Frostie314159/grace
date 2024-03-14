@@ -184,7 +184,7 @@ impl LinuxWiFiControlInterface {
                 Self::channel_to_center_frequency(channel + 4),
             )),
             ChannelWidth::EightyMHZ => match channel {
-                36..=48 => Some((5180, Some(5210))),
+                36..=48 => Some((5200, Some(5210))),
                 52..=64 => Some((5290, Some(5280))),
                 100..=112 => Some((5530, Some(5520))),
                 116..=128 => Some((5610, Some(5600))),
@@ -238,8 +238,7 @@ impl WiFiControlInterface for LinuxWiFiControlInterface {
             .version(NL_80211_GENL_VERSION)
             .build()
             .unwrap();
-        let response = self
-            .router
+        self.router
             .send::<_, _, Nlmsg, Genlmsghdr<Nl80211Cmd, Nl80211Attr, NoUserHeader>>(
                 self.nl80211_family_id,
                 NlmF::empty(),
@@ -247,8 +246,5 @@ impl WiFiControlInterface for LinuxWiFiControlInterface {
             )
             .await
             .expect("Failed to set channel.");
-        /* while let Some(response) = response.next::<Nlmsg, Genlmsghdr<Nl80211Cmd, Nl80211Attr, NoUserHeader>>().await {
-            println!("{response:?}");
-        } */
     }
 }
