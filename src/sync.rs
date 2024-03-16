@@ -86,6 +86,14 @@ impl SyncState {
             tsf_zero: Instant::now() - tsf,
         })
     }
+    pub fn distance_to_slot(&self, slot: usize, slot_offset: usize) -> usize {
+        let next_slot = self.current_slot_in_chanseq() + slot_offset;
+        if next_slot < slot {
+            slot - next_slot
+        } else {
+            16 - slot + next_slot
+        }
+    }
     pub fn sync_to(&mut self, other_state: SyncState) {
         // This is the advantage of our approach.
         self.tsf_zero = other_state.tsf_zero;

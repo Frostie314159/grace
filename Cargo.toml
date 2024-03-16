@@ -23,7 +23,7 @@ scroll = "0.12.0"
 sudo = "0.6.0"
 tidy-tuntap = { version = "0.3.1", git = "https://github.com/Frostie314159/tidy-tuntap.git", optional = true }
 tokio = { version = "1.35.0", features = ["time", "full"] }
-rcap = {path = "../rcap"}
+rcap = { git = "https://github.com/Frostie314159/rcap.git" }
 
 [features]
 linux = ["dep:tidy-tuntap", "futures/io-compat"]

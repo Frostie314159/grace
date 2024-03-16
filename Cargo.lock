@@ -1048,6 +1048,7 @@ dependencies = [
 [[package]]
 name = "rcap"
 version = "0.1.0"
+source = "git+https://github.com/Frostie314159/rcap.git#40c5865f5001f693d740aa5a4c698afc691304e3"
 dependencies = [
  "libc",
  "nix 0.28.0",

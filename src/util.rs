@@ -35,6 +35,3 @@ pub const fn ipv6_addr_from_hw_address(hardware_address: MACAddress) -> Ipv6Addr
         u16::from_be_bytes([hardware_address[4], hardware_address[5]]),
     )
 }
-pub const fn slot_distance(lhs: usize, rhs: usize) -> usize {
-    todo!()
-}

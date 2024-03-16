@@ -221,7 +221,7 @@ fn sort_frame_into_bucket(
         TrafficMode::BulkData => overlapping_slots
             .sorted_by(|a, b| slot_buckets[*a].len().cmp(&slot_buckets[*b].len()))
             .next()?,
-        TrafficMode::RealTime => overlapping_slots.next()?
+        TrafficMode::RealTime => overlapping_slots.min_by_key(|slot| self_sync_state.distance_to_slot(*slot, 2))?
     };
     slot_buckets[slot].push_back(frame);
     Some(())
