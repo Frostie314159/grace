@@ -110,8 +110,7 @@ impl Peer {
             sync_state: SyncState::new_with_sync_params_tlv_and_tx_delta(
                 synchronization_parameters_tlv,
                 awdl_af.tx_delta(),
-            )
-            .unwrap(),
+            )?,
             is_airdrop,
             last_tx_delta: awdl_af.tx_delta(),
         })

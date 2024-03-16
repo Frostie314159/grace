@@ -22,7 +22,8 @@ use awdl_frame_parser::{
     tlvs::{
         data_path::{
             ampdu_parameters::AMpduParameters, ht_capabilities_info::HTCapabilitiesInfo,
-            DataPathExtendedFlags, DataPathFlags, DataPathStateTLV, HTCapabilitiesTLV,
+            ChannelMap, DataPathChannel, DataPathExtendedFlags, DataPathFlags, DataPathStateTLV,
+            HTCapabilitiesTLV,
         },
         dns_sd::{ArpaTLV, ServiceParametersTLV},
         sync_elect::{
@@ -48,14 +49,10 @@ use scroll::{
 use std::{
     fmt::Debug,
     iter::{empty, Empty},
-    time::{Instant, UNIX_EPOCH},
+    time::Instant,
 };
 
-use crate::{
-    constants::{AWDL_BSSID, AW_DURATION},
-    sync::SyncState,
-    util::APPLE_OUI,
-};
+use crate::{constants::AWDL_BSSID, sync::SyncState, util::APPLE_OUI};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ElectionState {
@@ -69,8 +66,8 @@ pub struct ElectionState {
 impl ElectionState {
     pub const fn new(self_address: MACAddress) -> Self {
         Self {
-            self_metric: 500,
-            self_counter: 60,
+            self_metric: 60,
+            self_counter: 0,
             master_metric: 0,
             master_counter: 0,
             top_master_address: self_address,
@@ -152,7 +149,7 @@ impl SelfState {
             master_address: self.election_state.top_master_address,
             sync_address: self.election_state.sync_master_address,
             master_counter: self.election_state.master_counter,
-            distance_to_master: 0,
+            distance_to_master: 1,
             master_metric: self.election_state.master_metric,
             self_metric: self.election_state.self_metric,
             election_id: 0,
@@ -161,7 +158,7 @@ impl SelfState {
     }
     fn generate_version_tlv(&self) -> VersionTLV {
         VersionTLV {
-            version: AWDLVersion { major: 6, minor: 9 },
+            version: AWDLVersion { major: 3, minor: 4 },
             device_class: AWDLDeviceClass::MacOS,
         }
     }
@@ -175,19 +172,23 @@ impl SelfState {
     }
     fn generate_service_parameters(&self) -> ServiceParametersTLV<Empty<u8>> {
         ServiceParametersTLV {
-            sui: 69,
+            sui: 0,
             encoded_values: empty(),
         }
     }
     fn generate_data_path_state(&self) -> DataPathStateTLV {
         DataPathStateTLV {
             awdl_address: Some(self.address),
-            country_code: Some(['D', 'E']),
+            country_code: Some(['X', '0']),
             flags: DataPathFlags {
                 airplay_solo_mode_support: true,
                 umi_support: true,
                 ..Default::default()
             },
+            channel_map: Some(DataPathChannel::ChannelMap(ChannelMap {
+                channel_6: true,
+                ..Default::default()
+            })),
             extended_flags: Some(DataPathExtendedFlags::default()),
             ..Default::default()
         }

@@ -35,7 +35,7 @@ mod state;
 mod sync;
 mod util;
 
-const MAC_ADDRESS: MACAddress = MACAddress::new([0x00, 0x80, 0x41, 0x13, 0x37, 0x42]);
+const MAC_ADDRESS: MACAddress = MACAddress::new([0x00, 0xc0, 0xca, 0xb3, 0xf1, 0xe8]);
 
 //#[tokio::main(flavor = "current_thread")]
 #[tokio::main]

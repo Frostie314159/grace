@@ -94,8 +94,8 @@ impl EthernetInterface<TunTapError> for LinuxEthernetInterface {
         let tap =
             Tap::new_async("awdl0", false).map_err(|_| EthernetInterfaceError::NotPermitted)?;
         tap.set_hwaddr(hardware_address.0).unwrap();
-        tap.set_ipv6_addr(ipv6_addr_from_hw_address(hardware_address))
-            .unwrap();
+        /* tap.set_ipv6_addr(ipv6_addr_from_hw_address(hardware_address))
+        .unwrap(); */
         tap.bring_up().unwrap();
         tap.set_mtu(1450).unwrap();
         let (read_half, write_half) = split(tap);

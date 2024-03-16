@@ -16,6 +16,21 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#[cfg(target_os = "linux")]
-pub mod linux;
-pub mod rcap_wifi;
+use rcap::AsyncCapture;
+
+use crate::hals::{WiFiInterface, WiFiInterfaceError};
+
+use super::linux::LinuxWiFiControlInterface;
+
+pub struct RCapWiFiInterface;
+impl WiFiInterface<pcap::Error> for RCapWiFiInterface {
+    async fn new(
+        interface_name: &str,
+    ) -> Result<(LinuxWiFiControlInterface, AsyncCapture), WiFiInterfaceError<pcap::Error>> {
+        //let (read_half, write_half) = split(PcapAsyncWrapper::new(capture));
+        Ok((
+            LinuxWiFiControlInterface::new(interface_name).await,
+            AsyncCapture::new(interface_name).unwrap(),
+        ))
+    }
+}

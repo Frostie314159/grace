@@ -27,7 +27,11 @@ use ieee80211::common::TU;
 use tokio::time::{sleep, Instant};
 
 use crate::{
-    constants::{AW_DURATION, DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION, DEFAULT_SLOT_DURATION},
+    constants::{
+        AW_DURATION, DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION, DEFAULT_SLOT_AW_COUNT,
+        DEFAULT_SLOT_DURATION, DEFAULT_SLOT_DURATION_IN_TU, UNICAST_GUARD_INTERVAL,
+        UNICAST_GUARD_INTERVAL_IN_TU,
+    },
     duration_rem,
 };
 
@@ -57,9 +61,9 @@ impl SyncState {
     pub fn new_with_default_chanseq() -> Self {
         Self {
             channel_sequence: {
-                let chan_seq = [CHANNEL_44_FLAGS; 16];
+                let mut chan_seq = [CHANNEL_6_FLAGS; 16];
                 // We disable channel hopping completely for now.
-                /* chan_seq[8] = CHANNEL_6_FLAGS; */
+                //chan_seq[10] = CHANNEL_6_FLAGS;
                 chan_seq
             },
             tsf_zero: Instant::now(),
@@ -68,17 +72,15 @@ impl SyncState {
     /// The Δt should be the sum Δt specified in the AF-Header and the time which has elapsed since the reception of that frame.
     pub fn new_with_sync_params_tlv_and_tx_delta(
         sync_params_tlv: SynchronizationParametersTLV,
-        _tx_delta: Duration,
+        tx_delta: Duration,
     ) -> Option<Self> {
         let aw_period = sync_params_tlv.aw_period as i32;
-        let elapsed_since_slot_zero_in_tu;
+
         let elapsed_since_aw_begin_in_tu =
             aw_period.wrapping_sub(sync_params_tlv.remaining_aw_length as i32);
-        elapsed_since_slot_zero_in_tu =
+        let elapsed_since_slot_zero_in_tu =
             elapsed_since_aw_begin_in_tu + aw_period * sync_params_tlv.aw_seq_number as i32;
-        let tsf = Duration::from_nanos(
-            ((elapsed_since_slot_zero_in_tu as u64) << 10) % ((aw_period as u64) << 26),
-        );
+        let tsf = TU * elapsed_since_slot_zero_in_tu as u32 - tx_delta - TU;
         let ChannelSequence::Legacy(channel_sequence) =
             sync_params_tlv.channel_sequence.channel_sequence
         else {
@@ -101,6 +103,31 @@ impl SyncState {
         )
     }
 
+    pub fn elapsed_since_slot_begin_in_tu(&self) -> usize {
+        ((self.tsf_zero.elapsed().as_micros() % DEFAULT_SLOT_DURATION.as_micros()) / TU.as_micros())
+            as usize
+    }
+    pub fn current_aw_in_chanseq(&self) -> usize {
+        self.aw_seq_number() as usize % DEFAULT_SLOT_AW_COUNT
+    }
+    pub fn in_guard_interval(&self) -> bool {
+        !(UNICAST_GUARD_INTERVAL_IN_TU
+            ..(DEFAULT_SLOT_DURATION_IN_TU - UNICAST_GUARD_INTERVAL_IN_TU))
+            .contains(&self.elapsed_since_slot_begin_in_tu())
+    }
+    pub fn time_to_next_slot_with_gi(&self) -> Duration {
+        DEFAULT_SLOT_DURATION - duration_rem!(self.tsf_zero.elapsed(), DEFAULT_SLOT_DURATION)
+            + UNICAST_GUARD_INTERVAL
+    }
+    pub fn time_to_slot_with_gi(&self, slot: usize) -> Duration {
+        let current_slot = self.current_slot_in_chanseq();
+        let temp = if current_slot >= slot {
+            DEFAULT_SLOT_DURATION * (16 - (current_slot - slot) - 1) as u32
+        } else {
+            DEFAULT_SLOT_DURATION * ((slot - current_slot) - 1) as u32
+        };
+        temp + self.time_to_next_slot_with_gi()
+    }
     fn channel_for_slot(&self, slot: usize) -> Channel {
         let (flags, channel) = self.channel_sequence[slot];
         Channel::Legacy { flags, channel }
@@ -108,7 +135,21 @@ impl SyncState {
     pub fn overlaping_slots(&self, other: &SyncState) -> impl Iterator<Item = usize> {
         self.channel_sequence
             .into_iter()
-            .zip(other.channel_sequence.into_iter())
+            .zip(other.channel_sequence)
+            .map(|((lhs_flags, lhs_channel), (rhs_flags, rhs_channel))| {
+                (
+                    Channel::Legacy {
+                        flags: lhs_flags,
+                        channel: lhs_channel,
+                    }
+                    .channel(),
+                    Channel::Legacy {
+                        flags: rhs_flags,
+                        channel: rhs_channel,
+                    }
+                    .channel(),
+                )
+            })
             .enumerate()
             .filter_map(|(i, (lhs, rhs))| if lhs == rhs { Some(i) } else { None })
     }
@@ -185,10 +226,10 @@ impl SyncState {
         ChannelSequenceTLV {
             step_count: NonZeroU8::new(4).unwrap(),
             channel_sequence: ChannelSequence::OpClass(self.channel_sequence.map(
-                |(_, channel)| {
+                |(flags, channel)| {
                     (
                         channel,
-                        match channel {
+                        match (Channel::Legacy { flags, channel }).channel() {
                             44 => 0x80,
                             6 => 0x51,
                             _ => 0x00,

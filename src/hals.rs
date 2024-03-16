@@ -16,12 +16,14 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use crate::hal_impls::{pcap_wifi::PcapWiFiInterface, *};
+use crate::hal_impls::{rcap_wifi::RCapWiFiInterface, *};
 use cfg_if::cfg_if;
 use core::future::Future;
 use mac_parser::MACAddress;
+use pcap::{Active, Capture};
+use rcap::AsyncCapture;
 use std::io::Error;
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{unix::AsyncFd, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
 #[derive(Debug)]
 pub enum EthernetInterfaceError<PlatformError> {
@@ -77,16 +79,11 @@ pub trait WiFiInterface<PlatformError>
 where
     Self: Sized + Send + Sync + 'static,
 {
-    type InternalIO: AsyncRead + AsyncWrite + Sized + Send + Sync + 'static;
     fn new(
         interface_name: &str,
     ) -> impl Future<
         Output = Result<
-            (
-                impl WiFiControlInterface,
-                ReadHalf<Self::InternalIO>,
-                WriteHalf<Self::InternalIO>,
-            ),
+            (impl WiFiControlInterface, AsyncCapture),
             WiFiInterfaceError<PlatformError>,
         >,
     > + Send;
@@ -94,7 +91,7 @@ where
 cfg_if! {
     if #[cfg(feature = "linux")] {
         pub type HostEthernetInterface = linux::LinuxEthernetInterface;
-        pub type HostWiFiInterface = PcapWiFiInterface;
+        pub type HostWiFiInterface = RCapWiFiInterface;
     } else {
         compile_error!("A host target is required.");
     }
