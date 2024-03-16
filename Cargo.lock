@@ -44,6 +44,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "awdl-frame-parser"
 version = "0.3.8"
+source = "git+https://github.com/Frostie314159/awdl-frame-parser#9278aace2872eeea8a0bba315ff88b6d2d856d51"
 dependencies = [
  "bitfield-struct",
  "ether-type",
@@ -578,7 +579,6 @@ dependencies = [
  "macro-bits",
  "neli",
  "neli-wifi",
- "pcap",
  "rcap",
  "rtap",
  "scroll",
@@ -962,9 +962,9 @@ dependencies = [
 
 [[package]]
 name = "pcap"
-version = "1.2.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77452fdf9d211d9ca35d092aeefe4d4b3f0c4eb529ffb87a8a3b8fe2bb7c37c3"
+checksum = "99e935fc73d54a89fff576526c2ccd42bbf8247aae05b358693475b14fd4ff79"
 dependencies = [
  "bitflags 1.3.2",
  "errno 0.2.8",
@@ -1315,6 +1315,7 @@ dependencies = [
 [[package]]
 name = "tidy-tuntap"
 version = "0.3.1"
+source = "git+https://github.com/Frostie314159/tidy-tuntap.git#4fa85fc6db45cd3f2ecaafabcee29374945e3a99"
 dependencies = [
  "bindgen",
  "bitflags 1.3.2",

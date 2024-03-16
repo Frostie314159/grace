@@ -18,7 +18,7 @@
 
 use hals::{EthernetInterface, HostEthernetInterface, HostWiFiInterface, WiFiInterface};
 //#![allow(unused)]
-use grace::Grace;
+use grace::{Grace, TrafficMode};
 use log::LevelFilter;
 use mac_parser::MACAddress;
 //use packet_core::PacketCore;
@@ -44,7 +44,7 @@ async fn run() {
         HostWiFiInterface::new("wlan1").await.unwrap(),
         HostEthernetInterface::new(MAC_ADDRESS).unwrap(),
     );
-    grace.run(MAC_ADDRESS).await;
+    grace.run(MAC_ADDRESS, TrafficMode::BulkData).await;
 }
 
 // Setup code goes here.

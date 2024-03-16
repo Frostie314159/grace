@@ -20,10 +20,9 @@ use crate::hal_impls::{rcap_wifi::RCapWiFiInterface, *};
 use cfg_if::cfg_if;
 use core::future::Future;
 use mac_parser::MACAddress;
-use pcap::{Active, Capture};
 use rcap::AsyncCapture;
 use std::io::Error;
-use tokio::io::{unix::AsyncFd, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
 #[derive(Debug)]
 pub enum EthernetInterfaceError<PlatformError> {

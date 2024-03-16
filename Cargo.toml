@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-awdl-frame-parser = { path = "../awdl-frame-parser" }
+awdl-frame-parser = { git = "https://github.com/Frostie314159/awdl-frame-parser" }
 cfg-if = "1.0.0"
 circular-buffer = "0.1.6"
 env_logger = "0.10.1"
@@ -18,11 +18,10 @@ mac-parser = "0.1.4"
 macro-bits = "0.1.4"
 neli = { features = ["async", "tokio"], git = "https://github.com/jbaublitz/neli.git" }
 neli-wifi = { git = "https://github.com/Frostie314159/neli-wifi.git", version = "0.6.0", features = ["async"] }
-pcap = "1.1.0"
 rtap = { git = "https://github.com/Frostie314159/rtap.git", branch = "experimental", version = "0.1.0" }
 scroll = "0.12.0"
 sudo = "0.6.0"
-tidy-tuntap = { version = "0.3.1", path = "../tidy-tuntap", optional = true }
+tidy-tuntap = { version = "0.3.1", git = "https://github.com/Frostie314159/tidy-tuntap.git", optional = true }
 tokio = { version = "1.35.0", features = ["time", "full"] }
 rcap = {path = "../rcap"}
 

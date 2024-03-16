@@ -36,17 +36,13 @@ use ieee80211::{
     IEEE80211Frame, ToFrame,
 };
 use itertools::Itertools;
-use log::{debug, info, trace};
+use log::{info, trace};
 use mac_parser::MACAddress;
-use pcap::{Active, Capture, Packet};
 use rcap::AsyncCapture;
 use rtap::{field_types::RadiotapField, frame::RadiotapFrame};
 use scroll::{ctx::MeasureWith, Pread, Pwrite};
 use tokio::{
-    io::{
-        unix::AsyncFd, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, Interest, ReadHalf,
-        WriteHalf,
-    },
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf},
     join, select, spawn,
     sync::{mpsc, watch, Mutex, RwLock},
     time::{interval, sleep, MissedTickBehavior},
@@ -218,12 +214,16 @@ fn sort_frame_into_bucket(
     other_sync_state: &SyncState,
     frame: OwnedEthernet2Frame,
     slot_buckets: &mut [CircularBuffer<8, OwnedEthernet2Frame>; 16],
+    traffic_mode: TrafficMode,
 ) -> Option<()> {
-    slot_buckets[self_sync_state
-        .overlaping_slots(other_sync_state)
-        .sorted_by(|a, b| slot_buckets[*a].len().cmp(&slot_buckets[*b].len()))
-        .next()?]
-    .push_back(frame);
+    let mut overlapping_slots = self_sync_state.overlaping_slots(other_sync_state);
+    let slot = match traffic_mode {
+        TrafficMode::BulkData => overlapping_slots
+            .sorted_by(|a, b| slot_buckets[*a].len().cmp(&slot_buckets[*b].len()))
+            .next()?,
+        TrafficMode::RealTime => overlapping_slots.next()?
+    };
+    slot_buckets[slot].push_back(frame);
     Some(())
 }
 fn build_awdl_data_frame(ethernet_frame: &OwnedEthernet2Frame, sequence_number: u16) -> Vec<u8> {
@@ -260,6 +260,12 @@ fn build_awdl_data_frame(ethernet_frame: &OwnedEthernet2Frame, sequence_number: 
     frame_buf[9] = EncodedRate::from_rate_in_kbps(54000, false).into_bits();
 
     frame_buf
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TrafficMode {
+    RealTime,
+    BulkData,
 }
 
 pub struct Grace<
@@ -344,7 +350,7 @@ impl<
         shared_state: Arc<SharedState<impl IPv6ControlInterface>>,
         sync_state_tx: watch::Sender<SyncState>,
     ) {
-        let mut election_timer = interval(Duration::from_secs(1));
+        let mut election_timer = interval(Duration::from_millis(300));
         loop {
             election_timer.tick().await;
             let peers = shared_state.peers.read().await;
@@ -447,6 +453,7 @@ impl<
         capture: Arc<AsyncCapture>,
         mut wifi_packet_queue_rx: mpsc::Receiver<OwnedEthernet2Frame>,
         mut sync_state_rx: watch::Receiver<SyncState>,
+        traffic_mode: TrafficMode
     ) {
         let mut sync_state = shared_state.self_state.read().await.sync_state;
         let mut slot_buckets =
@@ -484,7 +491,7 @@ impl<
                             continue;
                         };
                         let other_sync_state = peer.sync_state;
-                        sort_frame_into_bucket(&sync_state, &other_sync_state, ethernet_frame, &mut slot_buckets);
+                        sort_frame_into_bucket(&sync_state, &other_sync_state, ethernet_frame, &mut slot_buckets, traffic_mode);
                     }
                     frames_in_queue += 1;
                 }
@@ -520,7 +527,7 @@ impl<
             }
         }
     }
-    pub async fn run(self, mac_address: MACAddress) {
+    pub async fn run(self, mac_address: MACAddress, traffic_mode: TrafficMode) {
         let Self {
             wifi_data_interface,
             wifi_control_interface,
@@ -555,7 +562,8 @@ impl<
                 shared_state.clone(),
                 capture.clone(),
                 wifi_packet_queue_rx,
-                sync_state_rx.clone()
+                sync_state_rx.clone(),
+                traffic_mode
             )),
             spawn(Self::wifi_control_out_task(
                 shared_state.clone(),

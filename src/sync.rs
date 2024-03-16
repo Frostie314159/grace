@@ -60,12 +60,7 @@ pub struct SyncState {
 impl SyncState {
     pub fn new_with_default_chanseq() -> Self {
         Self {
-            channel_sequence: {
-                let mut chan_seq = [CHANNEL_6_FLAGS; 16];
-                // We disable channel hopping completely for now.
-                //chan_seq[10] = CHANNEL_6_FLAGS;
-                chan_seq
-            },
+            channel_sequence: { [CHANNEL_6_FLAGS; 16] },
             tsf_zero: Instant::now(),
         }
     }

@@ -16,17 +16,17 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use rcap::AsyncCapture;
+use rcap::{AsyncCapture, RCapError};
 
 use crate::hals::{WiFiInterface, WiFiInterfaceError};
 
 use super::linux::LinuxWiFiControlInterface;
 
 pub struct RCapWiFiInterface;
-impl WiFiInterface<pcap::Error> for RCapWiFiInterface {
+impl WiFiInterface<RCapError> for RCapWiFiInterface {
     async fn new(
         interface_name: &str,
-    ) -> Result<(LinuxWiFiControlInterface, AsyncCapture), WiFiInterfaceError<pcap::Error>> {
+    ) -> Result<(LinuxWiFiControlInterface, AsyncCapture), WiFiInterfaceError<RCapError>> {
         //let (read_half, write_half) = split(PcapAsyncWrapper::new(capture));
         Ok((
             LinuxWiFiControlInterface::new(interface_name).await,
