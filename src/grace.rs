@@ -16,7 +16,13 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::{array, collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    array,
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+    sync::Arc,
+    time::Duration,
+};
 
 use awdl_frame_parser::{
     action_frame::{AWDLActionFrameSubType, DefaultAWDLActionFrame},
@@ -209,10 +215,10 @@ async fn process_wifi_frame(
 fn is_peer_more_eligable_for_master(lhs: &ElectionState, rhs: &ElectionState) -> bool {
     lhs.self_metric < rhs.self_metric
 }
-fn sort_frame_into_bucket(
+/* fn sort_frame_into_bucket(
     self_sync_state: &SyncState,
     other_sync_state: &SyncState,
-    frame: OwnedEthernet2Frame,
+    frame: &OwnedEthernet2Frame,
     slot_buckets: &mut [CircularBuffer<8, OwnedEthernet2Frame>; 16],
     traffic_mode: TrafficMode,
 ) -> Option<()> {
@@ -221,12 +227,21 @@ fn sort_frame_into_bucket(
         TrafficMode::BulkData => overlapping_slots
             .sorted_by(|a, b| slot_buckets[*a].len().cmp(&slot_buckets[*b].len()))
             .next()?,
-        TrafficMode::RealTime => overlapping_slots.min_by_key(|slot| self_sync_state.distance_to_slot(*slot, 2))?
+        TrafficMode::RealTime => overlapping_slots.min_by_key(|slot| self_sync_state.distance_to_slot(*slot, 1))?,
+        TrafficMode::Experimental => overlapping_slots.next()?
     };
     slot_buckets[slot].push_back(frame);
     Some(())
+} */
+fn get_slot_for_frame(
+    self_sync_state: &SyncState,
+    other_sync_state: &SyncState,
+    frame: &OwnedEthernet2Frame
+) -> Option<usize> {
+    self_sync_state.overlaping_slots(other_sync_state).min_by_key(|slot| self_sync_state.distance_to_slot(*slot, 2))
+
 }
-fn build_awdl_data_frame(ethernet_frame: &OwnedEthernet2Frame, sequence_number: u16) -> Vec<u8> {
+fn build_awdl_data_frame(ethernet_frame: OwnedEthernet2Frame, sequence_number: u16) -> Vec<u8> {
     let awdl_data_frame = AWDLDataFrame {
         ether_type: ethernet_frame.header.ether_type,
         sequence_number,
@@ -263,8 +278,10 @@ fn build_awdl_data_frame(ethernet_frame: &OwnedEthernet2Frame, sequence_number: 
 }
 
 #[derive(Clone, Copy, Debug)]
+/// This just changes the used scheduler.
 pub enum TrafficMode {
     RealTime,
+    Experimental,
     BulkData,
 }
 
@@ -453,47 +470,55 @@ impl<
         capture: Arc<AsyncCapture>,
         mut wifi_packet_queue_rx: mpsc::Receiver<OwnedEthernet2Frame>,
         mut sync_state_rx: watch::Receiver<SyncState>,
-        traffic_mode: TrafficMode
+        traffic_mode: TrafficMode,
     ) {
         let mut sync_state = shared_state.self_state.read().await.sync_state;
-        let mut slot_buckets =
-            array::from_fn::<_, 16, _>(|_| CircularBuffer::<8, OwnedEthernet2Frame>::new());
-        let mut frames_in_queue = 0;
+        let mut unicast_queue: VecDeque<(OwnedEthernet2Frame, Vec<usize>)> = VecDeque::new();
+        let mut multicast_queue = VecDeque::new();
 
         let mut sequence_number = 0u16;
         loop {
             select! {
-                _ = sleep(sync_state.time_to_next_slot_with_gi()), if frames_in_queue > 0 => {
+                _ = sleep(sync_state.time_to_next_slot_with_gi()), if unicast_queue.len() > 0 => {
                     let current_slot = sync_state.current_slot_in_chanseq();
-                    let current_slot_bucket = &mut slot_buckets[current_slot];
                     let mut tx_counter = 0;
-                    while let Some(front) = current_slot_bucket.front() {
-                        // Prevent to many frames from blocking the task.
-                        if tx_counter > 4 {
+                    if [0, 10].contains(&current_slot) {
+                        while let Some(frame) = multicast_queue.pop_front() {
+                            let wifi_frame = build_awdl_data_frame(frame, sequence_number);
+                            capture.send(wifi_frame.as_slice()).await.expect("Failed to transmit data frame.");
+                            sequence_number += 1;
+                            trace!("Transmitted frame.");
+                        }
+                    }
+                    while let Some((frame, slots)) = unicast_queue.pop_front() {
+                        if tx_counter >= 4 {
                             break;
                         }
-                        let frame = build_awdl_data_frame(front, sequence_number);
-                        let _ = capture.send(frame.as_slice()).await;
-                        sequence_number += 1;
-                        trace!("Transmitted frame addressed to {}", front.header.dst);
-
-                        let _ = current_slot_bucket.pop_front();
-                        frames_in_queue -= 1;
                         tx_counter += 1;
-                    }
+                        if !slots.contains(&current_slot) {
+                            continue;
+                        }
+                        let wifi_frame = build_awdl_data_frame(frame, sequence_number);
+                        capture.send(wifi_frame.as_slice()).await.expect("Failed to transmit data frame.");
+                        sequence_number += 1;
+                        trace!("Transmitted frame.");
+                    } 
                 }
                 Some(ethernet_frame) = wifi_packet_queue_rx.recv() => {
                     if ethernet_frame.header.dst.is_multicast() {
-                        slot_buckets[10].push_back(ethernet_frame);
+                        multicast_queue.push_back(ethernet_frame);
                     } else {
                         let peers = shared_state.peers.read().await;
                         let Some(peer) = peers.get(&ethernet_frame.header.dst) else {
                             continue;
                         };
                         let other_sync_state = peer.sync_state;
-                        sort_frame_into_bucket(&sync_state, &other_sync_state, ethernet_frame, &mut slot_buckets, traffic_mode);
+                        /* let Some(slot) = get_slot_for_frame(&sync_state, &other_sync_state, &ethernet_frame) else {
+                            trace!("No overlapping slots found.");
+                            continue;
+                        }; */
+                        unicast_queue.push_back((ethernet_frame, sync_state.overlaping_slots(&other_sync_state).collect::<Vec<_>>()));
                     }
-                    frames_in_queue += 1;
                 }
                 _ = sync_state_rx.changed() => {
                     sync_state = *sync_state_rx.borrow_and_update();
