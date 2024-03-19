@@ -16,16 +16,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use std::{
-    array,
-    collections::{HashMap, VecDeque},
-    marker::PhantomData,
-    sync::Arc,
-    time::Duration,
-};
-
 use awdl_frame_parser::{
     action_frame::{AWDLActionFrameSubType, DefaultAWDLActionFrame},
+    common::AWDLDnsCompression,
     data_frame::AWDLDataFrame,
 };
 use circular_buffer::CircularBuffer;
@@ -47,9 +40,19 @@ use mac_parser::MACAddress;
 use rcap::AsyncCapture;
 use rtap::{field_types::RadiotapField, frame::RadiotapFrame};
 use scroll::{ctx::MeasureWith, Pread, Pwrite};
+use std::{
+    array,
+    collections::{HashMap, VecDeque},
+    future::pending,
+    marker::PhantomData,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf},
-    join, select, spawn,
+    join,
+    net::TcpListener,
+    select, spawn,
     sync::{mpsc, watch, Mutex, RwLock},
     time::{interval, sleep, MissedTickBehavior},
 };
@@ -61,15 +64,15 @@ use crate::{
     peer::Peer,
     state::{ElectionState, SelfState},
     sync::SyncState,
-    util::APPLE_OUI,
+    util::{ipv6_addr_from_hw_address, APPLE_OUI},
 };
 
 const PEER_REMOVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-struct SharedState<IPv6ControlInterfaceInstance: IPv6ControlInterface> {
-    peers: RwLock<HashMap<MACAddress, Peer>>,
-    ipv6_control_interface: Mutex<IPv6ControlInterfaceInstance>,
-    self_state: RwLock<SelfState>,
+pub struct SharedState<IPv6ControlInterfaceInstance: IPv6ControlInterface> {
+    pub peers: RwLock<HashMap<MACAddress, Peer>>,
+    pub ipv6_control_interface: Mutex<IPv6ControlInterfaceInstance>,
+    pub self_state: RwLock<SelfState>,
 }
 impl<IPv6ControlInterfaceInstance: IPv6ControlInterface> SharedState<IPv6ControlInterfaceInstance> {
     pub fn new(
@@ -236,16 +239,17 @@ fn is_peer_more_eligable_for_master(lhs: &ElectionState, rhs: &ElectionState) ->
 fn get_slot_for_frame(
     self_sync_state: &SyncState,
     other_sync_state: &SyncState,
-    frame: &OwnedEthernet2Frame
+    frame: Ethernet2Frame,
 ) -> Option<usize> {
-    self_sync_state.overlaping_slots(other_sync_state).min_by_key(|slot| self_sync_state.distance_to_slot(*slot, 2))
-
+    self_sync_state
+        .overlaping_slots(other_sync_state)
+        .min_by_key(|slot| self_sync_state.distance_to_slot(*slot))
 }
-fn build_awdl_data_frame(ethernet_frame: OwnedEthernet2Frame, sequence_number: u16) -> Vec<u8> {
+fn build_awdl_data_frame(ethernet_frame: Ethernet2Frame, sequence_number: u16) -> Vec<u8> {
     let awdl_data_frame = AWDLDataFrame {
         ether_type: ethernet_frame.header.ether_type,
         sequence_number,
-        payload: ethernet_frame.payload.as_slice(),
+        payload: ethernet_frame.payload,
     };
     let llc_frame = AWDLLLCFrame {
         ssap: 0xaa,
@@ -275,6 +279,18 @@ fn build_awdl_data_frame(ethernet_frame: OwnedEthernet2Frame, sequence_number: u
     frame_buf[9] = EncodedRate::from_rate_in_kbps(54000, false).into_bits();
 
     frame_buf
+}
+async fn wait_for_slot_and_transmit(
+    capture: &Arc<AsyncCapture>,
+    self_sync_state: &SyncState,
+    slot: usize,
+    ethernet_frame: Ethernet2Frame<'_>,
+    sequence_number: &mut u16,
+) {
+    let frame = build_awdl_data_frame(ethernet_frame, *sequence_number);
+    *sequence_number += 1;
+    sleep(self_sync_state.time_to_slot_with_gi(slot)).await;
+    capture.send(&frame).await;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -444,81 +460,42 @@ impl<
             }
         }
     }
-    async fn eth_in_task(
-        mut ethernet_read_half: ReadHalf<EthernetDataInterface>,
-        wifi_packet_queue_tx: mpsc::Sender<OwnedEthernet2Frame>,
-    ) {
-        let mut buf = [0x00u8; 1512];
-        loop {
-            let read = ethernet_read_half
-                .read(&mut buf)
-                .await
-                .expect("Failed to read from tap interface.");
-            let Ok(ethernet_frame) = buf[..read].pread::<Ethernet2Frame>(0) else {
-                continue;
-            };
-            let _ = wifi_packet_queue_tx
-                .send(OwnedEthernet2Frame {
-                    header: ethernet_frame.header,
-                    payload: ethernet_frame.payload.to_vec(),
-                })
-                .await;
-        }
-    }
     async fn wifi_data_out_task(
         shared_state: Arc<SharedState<IPv6ControlInterfaceInstance>>,
         capture: Arc<AsyncCapture>,
-        mut wifi_packet_queue_rx: mpsc::Receiver<OwnedEthernet2Frame>,
+        mut ethernet_read_half: ReadHalf<EthernetDataInterface>,
         mut sync_state_rx: watch::Receiver<SyncState>,
         traffic_mode: TrafficMode,
     ) {
         let mut sync_state = shared_state.self_state.read().await.sync_state;
-        let mut unicast_queue: VecDeque<(OwnedEthernet2Frame, Vec<usize>)> = VecDeque::new();
-        let mut multicast_queue = VecDeque::new();
 
         let mut sequence_number = 0u16;
+        let mut buf = [0x00u8; 1500];
         loop {
             select! {
-                _ = sleep(sync_state.time_to_next_slot_with_gi()), if unicast_queue.len() > 0 => {
-                    let current_slot = sync_state.current_slot_in_chanseq();
-                    let mut tx_counter = 0;
-                    if [0, 10].contains(&current_slot) {
-                        while let Some(frame) = multicast_queue.pop_front() {
-                            let wifi_frame = build_awdl_data_frame(frame, sequence_number);
-                            capture.send(wifi_frame.as_slice()).await.expect("Failed to transmit data frame.");
-                            sequence_number += 1;
-                            trace!("Transmitted frame.");
+                Ok(read) = ethernet_read_half.read(buf.as_mut_slice()) => {
+                    let Ok(ethernet_frame) = buf[..read].pread::<Ethernet2Frame>(0) else {
+                        continue;
+                    };
+                    let slot = if ethernet_frame.header.dst.is_multicast() {
+                        if sync_state.distance_to_slot(0) < sync_state.distance_to_slot(10) {
+                            0
+                        } else {
+                            10
                         }
-                    }
-                    while let Some((frame, slots)) = unicast_queue.pop_front() {
-                        if tx_counter >= 4 {
-                            break;
-                        }
-                        tx_counter += 1;
-                        if !slots.contains(&current_slot) {
-                            continue;
-                        }
-                        let wifi_frame = build_awdl_data_frame(frame, sequence_number);
-                        capture.send(wifi_frame.as_slice()).await.expect("Failed to transmit data frame.");
-                        sequence_number += 1;
-                        trace!("Transmitted frame.");
-                    } 
-                }
-                Some(ethernet_frame) = wifi_packet_queue_rx.recv() => {
-                    if ethernet_frame.header.dst.is_multicast() {
-                        multicast_queue.push_back(ethernet_frame);
                     } else {
                         let peers = shared_state.peers.read().await;
                         let Some(peer) = peers.get(&ethernet_frame.header.dst) else {
                             continue;
                         };
                         let other_sync_state = peer.sync_state;
-                        /* let Some(slot) = get_slot_for_frame(&sync_state, &other_sync_state, &ethernet_frame) else {
-                            trace!("No overlapping slots found.");
+                        let Some(slot) = sync_state.overlaping_slots(&other_sync_state).min_by_key(|slot| sync_state.time_to_slot_with_gi(*slot)) else {
+                            info!("Unable to transmit frame to {} due to no overlapping slots.", ethernet_frame.header.dst);
                             continue;
-                        }; */
-                        unicast_queue.push_back((ethernet_frame, sync_state.overlaping_slots(&other_sync_state).collect::<Vec<_>>()));
-                    }
+                        };
+                        slot
+                    };
+                    wait_for_slot_and_transmit(&capture, &sync_state, slot, ethernet_frame, &mut sequence_number).await;
                 }
                 _ = sync_state_rx.changed() => {
                     sync_state = *sync_state_rx.borrow_and_update();
@@ -552,6 +529,44 @@ impl<
             }
         }
     }
+    async fn service_discovery_task(shared_state: Arc<SharedState<IPv6ControlInterfaceInstance>>) {
+        let tcp_listener = TcpListener::bind("[::]:1337")
+            .await
+            .expect("Failed to bind to address.");
+        let mut clients: HashMap<std::net::SocketAddr, tokio::net::TcpStream> = HashMap::new();
+        let mut update_interval = interval(Duration::from_secs(1));
+        loop {
+            select! {
+                _ = update_interval.tick() => {
+                    let peers = shared_state.peers.read().await;
+                    let service_string = peers.iter().fold(String::new(), |acc, (address, peer)| {
+                        if let Some(ipv6_address) = peer.services.iter().find_map(|service| {
+                            if service.domain == AWDLDnsCompression::AirDropTcpLocal {
+                                Some(ipv6_addr_from_hw_address(*address).to_string())
+                            } else {
+                                None
+                            }
+                        }) {
+                            acc + &ipv6_address + ","
+                        }else {
+                            acc
+                        }
+
+                    });
+                    let service_string = service_string.strip_suffix(",").unwrap_or_default();
+                    for (_, client) in clients.iter_mut() {
+                        let Ok(_) = client.write(service_string.as_bytes()).await else {
+                            continue;
+                        };
+                    }
+                }
+                client = tcp_listener.accept() => {
+                    let client = client.unwrap();
+                    clients.insert(client.1, client.0);
+                }
+            }
+        }
+    }
     pub async fn run(self, mac_address: MACAddress, traffic_mode: TrafficMode) {
         let Self {
             wifi_data_interface,
@@ -563,7 +578,6 @@ impl<
         let shared_state = Arc::new(SharedState::new(ipv6_control_interface, mac_address));
 
         let (ethernet_read_half, ethernet_write_half) = ethernet_data_interface;
-        let (wifi_packet_queue_tx, wifi_packet_queue_rx) = mpsc::channel(0x20);
         let (sync_state_tx, sync_state_rx) =
             watch::channel(shared_state.self_state.read().await.sync_state);
 
@@ -582,11 +596,10 @@ impl<
                 wifi_control_interface,
                 sync_state_rx.clone()
             )),
-            spawn(Self::eth_in_task(ethernet_read_half, wifi_packet_queue_tx)),
             spawn(Self::wifi_data_out_task(
                 shared_state.clone(),
                 capture.clone(),
-                wifi_packet_queue_rx,
+                ethernet_read_half,
                 sync_state_rx.clone(),
                 traffic_mode
             )),
@@ -594,7 +607,8 @@ impl<
                 shared_state.clone(),
                 capture.clone(),
                 sync_state_rx
-            ))
+            )),
+            spawn(Self::service_discovery_task(shared_state.clone()))
         );
     }
 }

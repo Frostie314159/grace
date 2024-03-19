@@ -60,7 +60,11 @@ pub struct SyncState {
 impl SyncState {
     pub fn new_with_default_chanseq() -> Self {
         Self {
-            channel_sequence: { [CHANNEL_6_FLAGS; 16] },
+            channel_sequence: {
+                let mut chan_seq = [CHANNEL_6_FLAGS; 16];
+                //chan_seq[10] = CHANNEL_6_FLAGS;
+                chan_seq
+            },
             tsf_zero: Instant::now(),
         }
     }
@@ -86,8 +90,8 @@ impl SyncState {
             tsf_zero: Instant::now() - tsf,
         })
     }
-    pub fn distance_to_slot(&self, slot: usize, slot_offset: usize) -> usize {
-        let next_slot = self.current_slot_in_chanseq() + slot_offset;
+    pub fn distance_to_slot(&self, slot: usize) -> usize {
+        let next_slot = self.current_slot_in_chanseq();
         if next_slot < slot {
             slot - next_slot
         } else {

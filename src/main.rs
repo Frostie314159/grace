@@ -31,6 +31,7 @@ mod llc;
 mod grace;
 mod macros;
 mod peer;
+mod service;
 mod state;
 mod sync;
 mod util;
