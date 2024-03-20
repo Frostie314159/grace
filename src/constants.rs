@@ -28,14 +28,10 @@ macro_rules! mul_duration {
 }
 
 pub const AW_DURATION: Duration = mul_duration!(TU, 16);
-pub const AW_DURATION_IN_TU: usize = 16;
 pub const DEFAULT_EAW_COUNT: usize = 3;
 pub const DEFAULT_SLOT_AW_COUNT: usize = DEFAULT_EAW_COUNT + 1;
 pub const DEFAULT_SLOT_DURATION: Duration = mul_duration!(AW_DURATION, DEFAULT_SLOT_AW_COUNT);
-pub const DEFAULT_SLOT_DURATION_IN_TU: usize = DEFAULT_SLOT_AW_COUNT * AW_DURATION_IN_TU;
 pub const DEFAULT_CHANNEL_SEQUENCE_SLOT_COUNT: usize = 16;
-pub const DEFAULT_CHANNEL_SEQUENCE_AW_COUNT: usize =
-    DEFAULT_SLOT_AW_COUNT * DEFAULT_CHANNEL_SEQUENCE_SLOT_COUNT;
 pub const DEFAULT_CHANNEL_SEQUENCE_TOTAL_DURATION: Duration =
     mul_duration!(DEFAULT_SLOT_DURATION, DEFAULT_CHANNEL_SEQUENCE_SLOT_COUNT);
 pub const AWDL_BSSID: MACAddress = MACAddress::new([0x00, 0x25, 0x00, 0xff, 0x94, 0x73]);

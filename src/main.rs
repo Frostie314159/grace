@@ -16,18 +16,17 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+#![allow(refining_impl_trait)]
+
 use hals::{EthernetInterface, HostEthernetInterface, HostWiFiInterface, WiFiInterface};
-//#![allow(unused)]
-use grace::{Grace, TrafficMode};
+use grace::Grace;
 use log::LevelFilter;
 use mac_parser::MACAddress;
-//use packet_core::PacketCore;
 
 mod constants;
 mod hal_impls;
 mod hals;
 mod llc;
-//mod packet_core;
 mod grace;
 mod macros;
 mod peer;
@@ -44,13 +43,13 @@ async fn run() {
         HostWiFiInterface::new("wlan1").await.unwrap(),
         HostEthernetInterface::new(MAC_ADDRESS).unwrap(),
     );
-    grace.run(MAC_ADDRESS, TrafficMode::RealTime).await;
+    grace.run(MAC_ADDRESS).await;
 }
 
 // Setup code goes here.
 fn main() {
     env_logger::builder()
-        .filter_level(LevelFilter::Trace)
+        .filter_level(LevelFilter::Info)
         .filter_module("neli", LevelFilter::Error)
         .init();
     sudo::escalate_if_needed().unwrap();
