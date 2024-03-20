@@ -27,7 +27,6 @@ impl WiFiInterface<RCapError> for RCapWiFiInterface {
     async fn new(
         interface_name: &str,
     ) -> Result<(LinuxWiFiControlInterface, AsyncCapture), WiFiInterfaceError<RCapError>> {
-        //let (read_half, write_half) = split(PcapAsyncWrapper::new(capture));
         Ok((
             LinuxWiFiControlInterface::new(interface_name).await,
             AsyncCapture::new(interface_name).unwrap(),

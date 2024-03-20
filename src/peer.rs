@@ -20,9 +20,8 @@ use std::time::Duration;
 
 use awdl_frame_parser::{
     action_frame::{AWDLActionFrameSubType, DefaultAWDLActionFrame},
-    common::AWDLDnsCompression,
     tlvs::{
-        dns_sd::{dns_record::AWDLDnsRecord, DefaultServiceResponseTLV},
+        dns_sd::DefaultServiceResponseTLV,
         sync_elect::{
             ElectionParametersTLV, ElectionParametersV2TLV, SynchronizationParametersTLV,
         },
@@ -33,7 +32,7 @@ use ieee80211::{common::TU, mgmt_frame::header::ManagementFrameHeader};
 use mac_parser::MACAddress;
 use tokio::time::Instant;
 
-use crate::{state::ElectionState, sync::SyncState};
+use crate::{service::AWDLService, state::ElectionState, sync::SyncState};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Peer {
@@ -42,8 +41,8 @@ pub struct Peer {
     pub last_psf_timestamp: Instant,
     pub last_mif_timestamp: Instant,
     pub sync_state: SyncState,
-    pub is_airdrop: bool,
     pub last_tx_delta: Duration,
+    pub services: Vec<AWDLService>,
 }
 impl Peer {
     fn extract_tlvs(
@@ -95,13 +94,7 @@ impl Peer {
         else {
             return None;
         };
-        let is_airdrop = service_responses.into_iter().any(|service_response| {
-            if let AWDLDnsRecord::PTR { domain_name } = service_response.record {
-                domain_name.domain == AWDLDnsCompression::AirDropTcpLocal
-            } else {
-                false
-            }
-        });
+        let services = AWDLService::from_responses(service_responses);
         Some(Peer {
             address: management_frame_header.transmitter_address,
             election_state: election_parameters_v2_tlv.into(),
@@ -111,8 +104,8 @@ impl Peer {
                 synchronization_parameters_tlv,
                 awdl_af.tx_delta(),
             )?,
-            is_airdrop,
             last_tx_delta: awdl_af.tx_delta(),
+            services,
         })
     }
     pub async fn update_with_af(&mut self, awdl_af: DefaultAWDLActionFrame<'_>) {
@@ -125,7 +118,7 @@ impl Peer {
             synchronization_parameters_tlv,
             _election_parameters,
             Some(election_parameters_v2_tlv),
-            _service_responses,
+            service_responses,
         )) = Self::extract_tlvs(awdl_af.tagged_data)
         else {
             return;
@@ -137,5 +130,8 @@ impl Peer {
         )
         .unwrap();
         self.last_tx_delta = awdl_af.tx_delta();
+        if !service_responses.is_empty() {
+            self.services = AWDLService::from_responses(service_responses);
+        }
     }
 }
