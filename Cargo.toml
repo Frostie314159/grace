@@ -24,7 +24,6 @@ sudo = "0.6.0"
 tidy-tuntap = { version = "0.3.1", git = "https://github.com/Frostie314159/tidy-tuntap.git", optional = true }
 tokio = { version = "1.35.0", features = ["time", "full"] }
 rcap = { git = "https://github.com/Frostie314159/rcap.git" }
-zbus = { version = "4.1.2", default-features = false, features = ["tokio"] }
 
 [features]
 linux = ["dep:tidy-tuntap", "futures/io-compat"]

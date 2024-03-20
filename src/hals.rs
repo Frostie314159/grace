@@ -24,6 +24,7 @@ use rcap::AsyncCapture;
 use std::io::Error;
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum EthernetInterfaceError<PlatformError> {
     NotPermitted,
@@ -51,6 +52,7 @@ where
         EthernetInterfaceError<PlatformError>,
     >;
 }
+#[allow(unused)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelWidth {
     TwentyMHz,
@@ -60,6 +62,7 @@ pub enum ChannelWidth {
     OneHundredAndSixtyMHz,
     ThreeHundredAndTwentyMHz,
 }
+#[allow(unused)]
 #[derive(Debug)]
 pub enum WiFiInterfaceError<PlatformError> {
     NoInterfaceWithThatName,
